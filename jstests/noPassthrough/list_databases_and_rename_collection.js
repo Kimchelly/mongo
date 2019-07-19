@@ -1,3 +1,4 @@
+load('src/mongo/shell/servers.js');
 //
 // Run 'listDatabases' while renaming a collection concurrently. See SERVER-34531.
 //

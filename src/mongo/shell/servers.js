@@ -437,6 +437,7 @@ var MongoRunner, _startMongod, startMongoProgram, runMongoProgram, startMongoPro
     MongoRunner.savedOptions = {};
 
     MongoRunner.mongoOptions = function(opts) {
+        print("kim: mongoOptions()");
         // Don't remember waitForConnect
         var waitForConnect = opts.waitForConnect;
         delete opts.waitForConnect;
@@ -582,7 +583,7 @@ var MongoRunner, _startMongod, startMongoProgram, runMongoProgram, startMongoPro
      *   }
      */
     MongoRunner.mongodOptions = function(opts) {
-
+        print("kim: mongodOptions()");
         opts = MongoRunner.mongoOptions(opts);
 
         opts.dbpath = MongoRunner.toRealDir(opts.dbpath || "$dataDir/mongod-$port", opts.pathOpts);
@@ -660,6 +661,7 @@ var MongoRunner, _startMongod, startMongoProgram, runMongoProgram, startMongoPro
     };
 
     MongoRunner.mongosOptions = function(opts) {
+        print("kim: mongosOptions()");
         opts = MongoRunner.mongoOptions(opts);
 
         // Normalize configdb option to be host string if currently a host
@@ -733,7 +735,7 @@ var MongoRunner, _startMongod, startMongoProgram, runMongoProgram, startMongoPro
      * @see MongoRunner.arrOptions
      */
     MongoRunner.runMongod = function(opts) {
-
+        print("runMongod()");
         opts = opts || {};
         var env = undefined;
         var useHostName = true;
@@ -767,6 +769,7 @@ var MongoRunner, _startMongod, startMongoProgram, runMongoProgram, startMongoPro
             opts = MongoRunner.arrOptions(mongodProgram, opts);
         }
 
+        print("kim: runMongod() -> _startWithArgs()");
         var mongod = MongoRunner._startWithArgs(opts, env, waitForConnect);
         if (!mongod) {
             return null;
@@ -785,6 +788,7 @@ var MongoRunner, _startMongod, startMongoProgram, runMongoProgram, startMongoPro
     };
 
     MongoRunner.runMongos = function(opts) {
+        print("kim: runMongos()");
         opts = opts || {};
 
         var env = undefined;
@@ -805,6 +809,7 @@ var MongoRunner, _startMongod, startMongoProgram, runMongoProgram, startMongoPro
             opts = MongoRunner.arrOptions(mongosProgram, opts);
         }
 
+        print("kim: runMongos() -> _startWithArgs()");
         var mongos = MongoRunner._startWithArgs(opts, env, waitForConnect);
         if (!mongos) {
             return null;
@@ -877,6 +882,7 @@ var MongoRunner, _startMongod, startMongoProgram, runMongoProgram, startMongoPro
      *  it uses the shutdown command, which requires admin credentials.
      */
     MongoRunner.stopMongod = function(conn, signal, opts) {
+        print("kim: stopMongod()");
         if (!conn.pid) {
             throw new Error("first arg must have a `pid` property; " +
                             "it is usually the object returned from MongoRunner.runMongod/s");
@@ -919,7 +925,10 @@ var MongoRunner, _startMongod, startMongoProgram, runMongoProgram, startMongoPro
                 MongoRunner.validateCollectionsCallback(port);
             }
 
-            returnCode = _stopMongoProgram(port, signal, opts);
+            var testDB = new Mongo("127.0.0.1:12345").getDB("test");
+            /*returnCode = */testDB.runCommand({"close": 1});
+            returnCode = 0;
+            // returnCode = _stopMongoProgram(port, signal, opts);
         }
         if (allowedExitCode !== returnCode) {
             throw new MongoRunner.StopError(returnCode);
@@ -948,7 +957,7 @@ var MongoRunner, _startMongod, startMongoProgram, runMongoProgram, startMongoPro
      * @see MongoRunner.arrOptions
      */
     MongoRunner.runMongoTool = function(binaryName, opts, ...positionalArgs) {
-
+        print("kim: runMongoTool()")
         var opts = opts || {};
 
         // Normalize and get the binary version to use
@@ -1034,6 +1043,7 @@ var MongoRunner, _startMongod, startMongoProgram, runMongoProgram, startMongoPro
     };
 
     _startMongod = function() {
+        print("kim: _startMongoEmpty()");
         print("startMongod WARNING DELETES DATA DIRECTORY THIS IS FOR TESTING ONLY");
         return _startMongodEmpty.apply(null, arguments);
     };
@@ -1247,8 +1257,63 @@ var MongoRunner, _startMongod, startMongoProgram, runMongoProgram, startMongoPro
      *     otherwise returns null if we fail to connect.
      */
     MongoRunner._startWithArgs = function(argArray, env, waitForConnect) {
+        print("kim: _startWithArgs()");
         // TODO: Make there only be one codepath for starting mongo processes
 
+        /* fake code*/
+        // mong shell connection to Jasper
+        var jasperMongo = new Mongo("127.0.0.1:12345");
+        var testDB = jasperMongo.getDB("test");
+        var res = null;
+        print("kim: args = " + JSON.stringify(argArray));
+        if (env === undefined) {
+            print("kim: env is undefined, running runCommand with just args");
+            // print(typeof(argArray));
+            res = testDB.runCommand({"createProcess": {"args": argArray}});
+            print("kim: Jasper createProcess response = " + JSON.stringify(res));
+        } else {
+            print("kim: env is defined, running runCommand with args and env");
+            res = testDB.runCommand({"createProcess": {"args": argArray, "env": env}});
+        }
+
+        // mongod port
+        var port = _parsePort.apply(null, argArray);
+        delete serverExitCodeMap[port];
+
+        var kimsPid = res.info.pid;
+        print("kim: the pid is:" + res.info.pid);
+        if (!waitForConnect) {
+            return {
+                pid: kimsPid,
+                port: port,
+            };
+        }
+
+        var conn = null;
+        assert.soon(function() {
+            try {
+                print("kim: the pid is:" + kimsPid);
+                sleep(5000);
+                conn = new Mongo("127.0.0.1:" + port);
+                conn.pid = kimsPid;
+                print("kim: returning from establishing connection to mongod");
+                return true;
+            } catch (e) {
+                print("kim: caught error " + e);
+                var res = checkProgram(kimsPid);
+                if (!res.alive) {
+                    print("Could not start mongo program at " + port +
+                          ", process ended with exit code: " + res.exitCode);
+                    serverExitCodeMap[port] = res.exitCode;
+                    return true;
+                }
+            }
+            return false;
+        }, "unable to connect to mongo program on port " + port, 600 * 1000);
+        /* end fake code */
+
+
+        /*
         argArray = appendSetParameterArgs(argArray);
         var port = _parsePort.apply(null, argArray);
         var pid = -1;
@@ -1265,7 +1330,10 @@ var MongoRunner, _startMongod, startMongoProgram, runMongoProgram, startMongoPro
                 port: port,
             };
         }
+        */
 
+        
+        /*
         var conn = null;
         assert.soon(function() {
             try {
@@ -1283,6 +1351,7 @@ var MongoRunner, _startMongod, startMongoProgram, runMongoProgram, startMongoPro
             }
             return false;
         }, "unable to connect to mongo program on port " + port, 600 * 1000);
+        */
 
         return conn;
     };
@@ -1296,6 +1365,7 @@ var MongoRunner, _startMongod, startMongoProgram, runMongoProgram, startMongoPro
      * command line arguments to the program.
      */
     startMongoProgram = function() {
+        print("kim: startMongoProgram()");
         var port = _parsePort.apply(null, arguments);
 
         // Enable test commands.
@@ -1328,6 +1398,7 @@ var MongoRunner, _startMongod, startMongoProgram, runMongoProgram, startMongoPro
     };
 
     runMongoProgram = function() {
+        print("kim: runMongoProgram()");
         var args = Array.from(arguments);
         args = appendSetParameterArgs(args);
         var progName = args[0];
@@ -1356,6 +1427,7 @@ var MongoRunner, _startMongod, startMongoProgram, runMongoProgram, startMongoPro
     // program name, and subsequent arguments to this function are passed as
     // command line arguments to the program.  Returns pid of the spawned program.
     startMongoProgramNoConnect = function() {
+        print("kim: startMongoProgramNoConnect()");
         var args = Array.from(arguments);
         args = appendSetParameterArgs(args);
         var progName = args[0];
@@ -1379,6 +1451,7 @@ var MongoRunner, _startMongod, startMongoProgram, runMongoProgram, startMongoPro
     };
 
     myPort = function() {
+        print("kim: myPort()");
         var m = db.getMongo();
         if (m.host.match(/:/))
             return m.host.match(/:(.*)/)[1];
